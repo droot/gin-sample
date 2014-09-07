@@ -24,7 +24,16 @@ func weatherHandler(w http.ResponseWriter, r *http.Request) {
 	begin := time.Now()
 	city := strings.SplitN(r.URL.Path, "/", 3)[2]
 
-	m := metaWeatherProvider{openWeatherMap{}, weatherUnderGround{apiKey: "c5e7c706ec76acd6"}}
+	log.Printf("URL params :: %v", r.URL.Query())
+	pt := r.URL.Query().Get("pt")
+
+	var m weatherProvider
+
+	if pt == "s" {
+		m = serialMetaWeatherProvider{openWeatherMap{}, weatherUnderGround{apiKey: "c5e7c706ec76acd6"}}
+	} else {
+		m = parallelMetaWeatherProvider{openWeatherMap{}, weatherUnderGround{apiKey: "c5e7c706ec76acd6"}}
+	}
 	data, err := m.temperature(city)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -101,9 +110,9 @@ func (w weatherUnderGround) temperature(city string) (float64, error) {
 	return kelvin, nil
 }
 
-type metaWeatherProvider []weatherProvider
+type serialMetaWeatherProvider []weatherProvider
 
-func (w metaWeatherProvider) temperature(city string) (float64, error) {
+func (w serialMetaWeatherProvider) temperature(city string) (float64, error) {
 
 	sum := 0.0
 
@@ -118,5 +127,35 @@ func (w metaWeatherProvider) temperature(city string) (float64, error) {
 		sum += data
 	}
 
+	return sum / float64(len(w)), nil
+}
+
+type parallelMetaWeatherProvider []weatherProvider
+
+func (w parallelMetaWeatherProvider) temperature(city string) (float64, error) {
+
+	temps := make(chan float64, len(w))
+	errs := make(chan error, len(w))
+
+	for _, provider := range w {
+		go func(p weatherProvider) {
+			data, err := p.temperature(city)
+			if err != nil {
+				log.Println("error in fetching temperature data")
+				errs <- err
+			}
+			temps <- data
+		}(provider)
+	}
+
+	sum := 0.0
+	for i := 0; i < len(w); i++ {
+		select {
+		case temp := <-temps:
+			sum += temp
+		case err := <-errs:
+			return 0, err
+		}
+	}
 	return sum / float64(len(w)), nil
 }
