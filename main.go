@@ -1,23 +1,24 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 )
 
 func main() {
 	fmt.Println("Booting up the server....")
-	http.HandleFunc("/weather/", weatherHandler)
-	http.ListenAndServe(":8000", nil)
+	r := gin.Default()
+	r.GET("/weather/:city", weatherHandler)
+	r.Run(":8000")
 }
 
-func weatherHandler(w http.ResponseWriter, r *http.Request) {
+func weatherHandler(c *gin.Context) {
+	r := c.Request
 	begin := time.Now()
-	city := strings.SplitN(r.URL.Path, "/", 3)[2]
+	city := c.Params.ByName("city")
 
 	pt := r.URL.Query().Get("pt")
 	log.Printf("passed query parameter pt :: %v", pt)
@@ -35,12 +36,11 @@ func weatherHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := m.temperature(city)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		c.Fail(http.StatusInternalServerError, err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	c.JSON(http.StatusOK, map[string]interface{}{
 		"name": city,
 		"temp": data,
 		"took": time.Since(begin).String(),
